@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:jbossts="http://www.mulesoft.org/schema/mule/jbossts" xmlns:mulexml="http://www.mulesoft.org/schema/mule/xml" xmlns:vm="http://www.mulesoft.org/schema/mule/vm" xmlns:cluster="http://www.mulesoft.org/schema/mule/ee/cluster" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:schedulers="http://www.mulesoft.org/schema/mule/schedulers" xmlns:file="http://www.mulesoft.org/schema/mule/file" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:jms="http://www.mulesoft.org/schema/mule/jms" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd
+http://www.mulesoft.org/schema/mule/schedulers http://www.mulesoft.org/schema/mule/schedulers/current/mule-schedulers.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+http://www.mulesoft.org/schema/mule/jbossts http://www.mulesoft.org/schema/mule/jbossts/current/mule-jbossts.xsd
+http://www.mulesoft.org/schema/mule/xml http://www.mulesoft.org/schema/mule/xml/current/mule-xml.xsd">
+    <db:mysql-config name="MySQL_Configuration" host="localhost" port="3306" user="root" password="Gmajji@3444" database="muletrainingdb" doc:name="MySQL Configuration"/>
+    <jms:activemq-connector name="Active_MQ" username="admin" password="admin" brokerURL="tcp://localhost:61616" validateConnections="true" doc:name="Active MQ"/>
+    <flow name="flowcontrollersFlow" processingStrategy="synchronous">
+        <poll doc:name="Poll">
+            <schedulers:cron-scheduler expression="30 * * ? * * *" timeZone="Asia/Kolkata"/>
+            <watermark variable="end_record_30" default-expression="0" selector="LAST" selector-expression="#[payload.product_id]"/>
+            <db:select config-ref="MySQL_Configuration"   doc:name="Database" transactionalAction="NOT_SUPPORTED">
+                <db:parameterized-query><![CDATA[select * from product where product_id > #[flowVars.end_record_30]]]></db:parameterized-query>
+            </db:select>
+        </poll>
+        <logger message="#[flowVars.end_record_30]" level="INFO" doc:name="Logger"/>
+        <expression-filter expression="#[!(payload.isEmpty())]" doc:name="Expression"/>
+        <logger message="#[payload]" level="INFO" doc:name="Logger"/>
+        <json:object-to-json-transformer doc:name="Object to JSON"/>
+        <vm:outbound-endpoint exchange-pattern="request-response" path="jsonObject" doc:name="VM"/>
+
+        <exception-strategy ref="flowcontrollersCatch_Exception_Strategy" doc:name="Reference Exception Strategy"/>
+    </flow>
+    <catch-exception-strategy name="flowcontrollersCatch_Exception_Strategy">
+        <logger level="INFO" doc:name="Logger"/>
+        <jms:outbound-endpoint queue="errorQueue" connector-ref="Active_MQ" doc:name="JMS"/>
+    </catch-exception-strategy>
+    <flow name="flowcontrollersFlow1" processingStrategy="synchronous">
+        <vm:inbound-endpoint exchange-pattern="request-response" path="jsonObject" doc:name="VM"/>
+        <scatter-gather doc:name="Scatter-Gather">
+            <processor-chain>
+               <dw:transform-message doc:name="Transform Message" metadata:id="200f42a8-a98f-46d7-b800-201cedfb6923">
+                    <dw:input-payload mimeType="application/json"/>
+                    <dw:set-payload><![CDATA[
+%dw 1.0
+%output text/plain schemaPath = "fixedlength.ffd"
+---
+payload map ((payload01 , indexOfPayload01) -> {
+	product_id: payload01.product_id,
+	brand_name: payload01.brand_name,
+	description: payload01.description,
+	name: payload01.name,
+	offer_price: payload01.offer_price,
+	offer_valid_until: payload01.offer_valid_until,
+	original_price: payload01.original_price,
+	available_price: payload01.original_price - payload01.offer_price 
+})
+]]></dw:set-payload>
+                </dw:transform-message>
+                <set-variable variableName="correlationid" value="#[java.util.UUID.randomUUID().toString()]" doc:name="Variable"/>
+                <logger message="correlation_Id@@@@@@@@#[flowVars.correlationid]" level="INFO" doc:name="Logger"/>
+                <message-chunk-splitter messageSize="400" doc:name="Message Chunk Splitter" />
+                <set-property propertyName="MULE_CORRELATION_ID" value="#[flowVars.correlationid]" doc:name="Property"/>
+                <byte-array-to-string-transformer doc:name="Byte Array to String"/>
+                <jms:outbound-endpoint queue="splitter_data" connector-ref="Active_MQ" doc:name="JMS"/>
+
+         </processor-chain>
+            <processor-chain>
+                <dw:transform-message doc:name="Transform Message" metadata:id="d201a947-0002-48f0-8110-33e9462f44ca">
+                    <dw:input-payload mimeType="application/json"/>
+                    <dw:set-payload><![CDATA[%dw 1.0
+%output application/csv
+---
+payload map ((payload01 , indexOfPayload01) -> {
+	product_id: payload01.product_id,
+	brand_name: payload01.brand_name,
+	description: payload01.description,
+	name: payload01.name,
+	offer_price: payload01.offer_price,
+	offer_valid_until: payload01.offer_valid_until,
+	original_price: payload01.original_price
+})]]></dw:set-payload>
+                </dw:transform-message>
+                <set-variable variableName="correlationId_2" value="#[java.util.UUID.randomUUID().toString()]" doc:name="Variable"/>
+                <logger message="correlation_Id_2@@@@@@@@#[flowVars.correlationId_2]" level="INFO" doc:name="Logger"/>
+                <message-chunk-splitter messageSize="200" doc:name="Message Chunk Splitter" />
+                <byte-array-to-string-transformer doc:name="Byte Array to String"/>
+                <jms:outbound-endpoint queue="splitter_data" connector-ref="Active_MQ" doc:name="JMS"/>
+
+            </processor-chain>
+            <processor-chain>
+                <dw:transform-message doc:name="Transform Message" metadata:id="09a11f63-3e70-4ed6-99de-4e367a13e19c">
+                    <dw:input-payload doc:sample="D:\Mule-Soft\productInfromation.json" mimeType="application/json"/>
+                    <dw:set-payload><![CDATA[%dw 1.0
+%output application/xml
+---
+Employees : { (payload map ((payload01 , indexOfPayload01) -> {
+	Employee : payload01
+	
+}))}]]></dw:set-payload>
+                </dw:transform-message>
+                <splitter enableCorrelation="ALWAYS" expression="#[xpath('//Employee')]" doc:name="Splitter"/>
+                <mulexml:dom-to-xml-transformer doc:name="DOM to XML"/>
+                <file:outbound-endpoint path="D:\file_sample\out" outputPattern="splitter#[server.nanoTime()]" responseTimeout="10000" doc:name="File"/>
+            </processor-chain>
+
+        </scatter-gather>
+        <exception-strategy ref="flowcontrollersCatch_Exception_Strategy" doc:name="Reference Exception Strategy"/>
+    </flow>
+    <flow name="flowcontrollersFlow2" processingStrategy="asynchronous">
+        <jms:inbound-endpoint queue="splitter_data" connector-ref="Active_MQ" doc:name="JMS"/>
+
+        <message-chunk-aggregator failOnTimeout="true" doc:name="Message Chunk Aggregator"/>
+        <byte-array-to-string-transformer doc:name="Byte Array to String"/>
+        <jms:outbound-endpoint queue="FinalQueue" connector-ref="Active_MQ" doc:name="JMS"/>
+        <exception-strategy ref="flowcontrollersCatch_Exception_Strategy" doc:name="Reference Exception Strategy"/>
+    </flow>
+</mule>

@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:spring="http://www.springframework.org/schema/beans" xmlns:jdbc-ee="http://www.mulesoft.org/schema/mule/ee/jdbc" xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:file="http://www.mulesoft.org/schema/mule/file"
+      xmlns:jdbc="http://www.mulesoft.org/schema/mule/jdbc"
+      xmlns:jms="http://www.mulesoft.org/schema/mule/jms"
+      xmlns:scripting="http://www.mulesoft.org/schema/mule/scripting"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:core="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+http://www.mulesoft.org/schema/mule/ee/jdbc http://www.mulesoft.org/schema/mule/ee/jdbc/current/mule-jdbc-ee.xsd
+http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd
+http://www.mulesoft.org/schema/mule/scripting http://www.mulesoft.org/schema/mule/scripting/current/mule-scripting.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+
+    <jms:activemq-connector name="JMSConnector" doc:name="Active MQ"></jms:activemq-connector>
+    <http:listener-config name="HTTP_Listener_Configuration" host="localhost" port="9091" doc:name="HTTP Listener Configuration"/>
+    <db:derby-config name="Derby_Configuration" url="jdbc:derby:${app.home}/muleEmbeddedDB;create=true"   doc:name="Derby Configuration"/>
+
+    <flow name="process" >
+        <http:listener config-ref="HTTP_Listener_Configuration" path="process" doc:name="HTTP">
+            <http:error-response-builder statusCode="500" reasonPhrase="You need to populate the Database first"/>
+        </http:listener>
+        <db:select config-ref="Derby_Configuration" doc:name="Database">
+            <db:parameterized-query><![CDATA[SELECT * FROM cars]]></db:parameterized-query>
+        </db:select>
+        <foreach doc:name="Foreach">
+            <choice doc:name="Choice">
+                <when expression="payload.'MODEL_YEAR' &#38;lt; 2001">
+                    <processor-chain doc:name="Processor Chain">
+                        <expression-component doc:name="Set payload type"><![CDATA[payload.'TYPE' = '20th century car']]></expression-component>
+                        <jms:outbound-endpoint connector-ref="JMSConnector" queue="in" doc:name="JMS"></jms:outbound-endpoint>
+                    </processor-chain>
+                </when>
+                <otherwise>
+                    <processor-chain doc:name="Processor Chain">
+                        <expression-component doc:name="Set payload type">payload.'TYPE'='21st century car'</expression-component>
+                        <file:outbound-endpoint path="/tmp" responseTimeout="10000" doc:name="File"></file:outbound-endpoint>
+                    </processor-chain>
+                </otherwise>
+            </choice>
+        </foreach>
+        <set-payload value="#[payload.size()] cars where processed: #[payload]" doc:name="Set response"></set-payload>
+        <parse-template location="foreach_info.html" doc:name="Parse Template"/>
+        <catch-exception-strategy doc:name="Catch Exception Strategy">
+            <parse-template location="foreach_error.html" doc:name="Parse Template"/>
+        </catch-exception-strategy>
+    </flow>
+    <flow name="scopesFlow">
+        <poll doc:name="Poll">
+            <fixed-frequency-scheduler frequency="1000"/>
+            <watermark variable="lastModifiedId" default-expression="0"/>
+        </poll>
+        <request-reply doc:name="Request-Reply"/>
+    </flow>
+    <flow name="populate" >
+         <http:listener config-ref="HTTP_Listener_Configuration" path="populate" doc:name="HTTP">
+            <http:error-response-builder statusCode="500" reasonPhrase="DB already populated"/>
+        </http:listener>
+
+        <scripting:component doc:name="Script to populate DB">
+            <scripting:script engine="Groovy">
+                <scripting:text><![CDATA[jdbcConnector = muleContext.getRegistry().lookupConnector("JDBCConnector");
+qr = jdbcConnector.getQueryRunner();
+conn = jdbcConnector.getConnection();
+qr.update(conn, "CREATE TABLE cars (model varchar(256), model_year integer)");
+qr.update(conn, "INSERT INTO cars values('Ford Sierra', 1982)");
+qr.update(conn, "INSERT INTO cars values('Opel Astra', 2001)");]]></scripting:text>
+
+
+            </scripting:script>
+        </scripting:component>
+        <set-payload value="Successfully populated the database" doc:name="Set Payload"></set-payload>
+        <parse-template location="foreach_info.html" doc:name="Parse Template"/>
+        <catch-exception-strategy doc:name="Catch Exception Strategy">
+            <parse-template location="foreach_error.html" doc:name="Parse Template"/>
+        </catch-exception-strategy>
+    </flow>
+</mule>

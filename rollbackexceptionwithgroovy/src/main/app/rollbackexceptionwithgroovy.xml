@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:jbossts="http://www.mulesoft.org/schema/mule/jbossts" xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw" xmlns:jms="http://www.mulesoft.org/schema/mule/jms" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:scripting="http://www.mulesoft.org/schema/mule/scripting" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+xmlns:spring="http://www.springframework.org/schema/beans" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/scripting http://www.mulesoft.org/schema/mule/scripting/current/mule-scripting.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd
+http://www.mulesoft.org/schema/mule/jbossts http://www.mulesoft.org/schema/mule/jbossts/current/mule-jbossts.xsd">
+    <http:listener-config name="HTTP_Listener_Configuration" host="0.0.0.0" port="8081" doc:name="HTTP Listener Configuration"/>
+    <jms:activemq-connector name="Active_MQ" username="admin" password="admin" brokerURL="tcp://localhost:61616" validateConnections="true" doc:name="Active MQ" maxRedelivery="3"/>
+   
+    <flow name="sdfsffsdFlow">
+        <jms:inbound-endpoint exchange-pattern="request-response" queue="inQueue" connector-ref="Active_MQ" doc:name="JMS">
+            <jms:transaction action="ALWAYS_BEGIN"/>
+        </jms:inbound-endpoint>
+        <dw:transform-message doc:name="Transform Message">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/json
+---
+{
+	something : ([5,9,8,7,3,5] orderBy $  )[-1 to 0]
+}]]></dw:set-payload>
+        </dw:transform-message>
+        <jms:outbound-endpoint queue="midQueue" connector-ref="Active_MQ" doc:name="JMS">
+            <jms:transaction action="ALWAYS_JOIN"/>
+        </jms:outbound-endpoint>
+        <logger message="After jms#[payload]" level="INFO" doc:name="Logger"/>
+        <scripting:component doc:name="Groovy">
+            <scripting:script engine="Groovy"><![CDATA[import groovy.json.JsonBuilder
+import groovy.json.JsonSlurper
+String jsonString = message.payload
+JsonSlurper slurper = new JsonSlurper()
+Collection parsedJson = slurper.parseText(jsonString)
+Map value = parsedJson.get(0)
+println(value.get("type")+"value of type")
+if(value.get("type") == null)
+{
+throw new Exception("does not contain what type of cars list it was")
+}
+
+
+println(message.payload)
+
+return message.payload
+]]></scripting:script>
+        </scripting:component>
+        <jms:outbound-endpoint queue="endQueue" connector-ref="Active_MQ" doc:name="JMS"/>
+       <rollback-exception-strategy doc:name="Rollback Exception Strategy">
+            <logger level="INFO" doc:name="Logger"/>
+            <on-redelivery-attempts-exceeded>
+                <jms:outbound-endpoint queue="rollBackQueue" connector-ref="Active_MQ" doc:name="JMS"/>
+            </on-redelivery-attempts-exceeded>
+        </rollback-exception-strategy> 
+
+    </flow>
+
+</mule>

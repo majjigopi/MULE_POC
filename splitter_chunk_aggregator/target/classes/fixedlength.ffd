@@ -1,0 +1,11 @@
+form: FIXEDWIDTH
+name: 'fixedlength'
+values: 
+- { name: 'product_id', usage: M, type: Integer, length: 10 }
+- { name: 'brand_name', usage: M, type: String, length: 20 }
+- { name: 'description', usage: M, type: String, length: 25 }
+- { name: 'name', usage: M, type: String, length: 20 }
+- { name: 'offer_price', usage: M, type: Integer, length: 10 }
+- { name: 'offer_valid_until', usage: M, type: Integer, length: 22 }
+- { name: 'original_price', usage: M, type: Integer, length: 10 }
+- { name: 'available_price', usage: M, type: Integer, length: 10 }

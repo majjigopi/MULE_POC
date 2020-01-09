@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:json="http://www.mulesoft.org/schema/mule/json" xmlns:jms="http://www.mulesoft.org/schema/mule/jms" xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:file="http://www.mulesoft.org/schema/mule/file" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd
+http://www.mulesoft.org/schema/mule/json http://www.mulesoft.org/schema/mule/json/current/mule-json.xsd
+http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd">
+    <file:connector name="File" outputPattern="emp.json" writeToDirectory="src/test/resources" autoDelete="true" outputAppend="true" streaming="true" validateConnections="true" doc:name="File"/>
+    <db:mysql-config name="MySQL_Configuration_poll_scope" host="localhost" port="3306" user="root" password="Gmajji@3444" database="muletrainingdb" doc:name="MySQL Configuration"/>
+    <jms:activemq-connector name="Active_MQ_poll" username="admin" password="admin" brokerURL="tcp://localhost:61616" validateConnections="true" doc:name="Active MQ"/>
+    <flow name="pollscopeFlow" processingStrategy="synchronous">
+        <poll doc:name="Poll">
+            <fixed-frequency-scheduler frequency="30000"/>
+            <watermark variable="end_record_2" default-expression="0" selector="MAX" selector-expression="#[payload.product_id]"/>
+            <db:select config-ref="MySQL_Configuration_poll_scope" doc:name="Database">
+                <db:parameterized-query><![CDATA[select * from product where product_id > #[flowVars.end_record_2]]]></db:parameterized-query>
+            </db:select>
+        </poll>
+        <expression-filter expression="#[payload==null  ]" doc:name="Expression"/>
+        <logger message="#[flowVars.end_record_1]" level="INFO" doc:name="Logger"/>
+        <json:object-to-json-transformer doc:name="Object to JSON"/>
+        <file:outbound-endpoint path="src/test/resources" outputPattern="emp.json" responseTimeout="10000" doc:name="File"/>
+    </flow>
+</mule>

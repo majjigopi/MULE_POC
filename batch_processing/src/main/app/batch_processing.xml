@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:core="http://www.mulesoft.org/schema/mule/core" xmlns:batch="http://www.mulesoft.org/schema/mule/batch"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" 
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+    <db:mysql-config name="MySQL_Configuration" host="localhost" port="3306" user="root" password="Gmajji@3444" database="usermodel" doc:name="MySQL Configuration"/>
+    <http:listener-config name="HTTP_Listener_Configuration" host="0.0.0.0" port="8081" doc:name="HTTP Listener Configuration"/>
+
+	<batch:job name="users-accounts-batch-job" max-failed-records="20">
+		<batch:threading-profile poolExhaustedAction="WAIT" />
+		<batch:input>
+			<flow-ref name="get-users-records" doc:name="get-users-records"/>
+		</batch:input>
+		<batch:process-records>
+			<batch:step name="get-user-account-step">
+				<logger message="Start processing step: get-user-account-step"  level="INFO" doc:name="Logger"/>
+				<enricher source="#[payload['id']]" target="#[recordVars['currentUser']]" doc:name="Message Enricher">
+				   	<set-payload value="#[payload]" doc:name="Set Payload"/>
+				</enricher>
+				<flow-ref name="get-account-record" doc:name="get-account-record"/>
+				<logger message="Account record payload: #[payload]" level="INFO" doc:name="Logger"/>
+				<!-- We may transform the record payload here and push it into a CSV file  -->
+			</batch:step>
+			<batch:step name="step-failures" accept-policy="ONLY_FAILURES">
+				<logger message="Failed record with user id:  #[recordVars['currentUser']]"  level="INFO" doc:name="Logger"/>
+			    <set-payload value="#[getStepExceptions()]" doc:name="Set Payload"/>
+	            <foreach  doc:name="For Each">
+	            	<logger message="Current user: #[recordVars['currentUser']] record has been failed, Exception: #[payload]" level="INFO" doc:name="Logger"/>
+	            	<!-- We may send the Payload here to a JMS queue -->
+	            </foreach>
+			</batch:step>
+		</batch:process-records>
+		<batch:on-complete>		
+						<set-payload value="BatchJobInstanceId:#[payload.batchJobInstanceId+'\n']
+			Number of TotalRecords: #[payload.totalRecords+'\n']
+			ProcessedRecords: #[payload.processedRecords+'\n']
+			Number of sucessfull Records: #[payload.successfulRecords+'\n']
+			Number of failed Records: #[payload.failedRecords+'\n']
+			ElapsedTime in milliseconds: #[payload.elapsedTimeInMillis+'\n']
+			InpuPhaseException #[payload.inputPhaseException+'\n']
+			LoadingPhaseException: #[payload.loadingPhaseException+'\n']
+			CompletePhaseException: #[payload.onCompletePhaseException+'\n'] " 
+			doc:name="Batch Result"/>
+			<logger message="on-complete payload: #[payload]" level="INFO" doc:name="Logger"/>
+		</batch:on-complete>
+	</batch:job>
+
+	<flow name="get-users-records"  processingStrategy="synchronous">
+		<logger message="Start getting users records - connecting to database using URL: ${database.url}" level="INFO" doc:name="Logger" />
+        <db:select config-ref="MySQL_Configuration" doc:name="get approved users">
+            <db:parameterized-query><![CDATA[SELECT * FROM usermodel.Users WHERE status=10;]]></db:parameterized-query>
+        </db:select>
+		<logger message="End getting users records #[payload]" level="INFO" doc:name="Logger" />
+	</flow>
+	
+	<flow name="get-account-record"  processingStrategy="synchronous">
+		<logger message="Start getting account record for user: #[recordVars['currentUser']]" level="INFO" doc:name="Logger" />
+		<db:select config-ref="MySQL_Configuration" doc:name="get user account account">
+            <db:parameterized-query><![CDATA[SELECT * FROM usermodel.Accounts WHERE user_id=#[recordVars['currentUser']];]]></db:parameterized-query>
+		</db:select>
+		<component class="batch_processing.AccountVerifier" doc:name="Java"/>
+		<logger message="End getting account record for user: #[recordVars['currentUser']]" level="INFO" doc:name="Logger" />
+	</flow>
+		
+	<flow name="start-batch-job" >
+        <http:listener config-ref="HTTP_Listener_Configuration" path="/batch" doc:name="HTTP"/>
+        <batch:execute name="users-accounts-batch-job" doc:name="users-accounts-batch-job"/>
+    </flow>
+
+</mule>
